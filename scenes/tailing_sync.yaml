@@ -1,0 +1,48 @@
+﻿name: tailing_sync
+description: >
+  Sound source circles behind the listener with a 200ms lag.
+  Tests LLR robustness when source and head rotation are nearly synchronized.
+  4 seconds, human voice.
+
+room:
+  dimensions: [8, 8, 3]
+  absorption: 0.3
+  max_order: 3
+
+microphone:
+  head_center: [4.0, 4.0, 1.5]
+  head_radius: 0.09
+  hrtf_mode: parametric
+
+source:
+  generator: human_voice
+  duration: 4.0
+  sample_rate: 44100
+
+motion:
+  enabled: true
+  type: circle
+  center: [4.0, 4.0, 1.5]
+  radius: 2.0
+  speed: 1.5
+
+output:
+  sample_rate: 44100
+  visualize: true
+
+noise:
+  enabled: false
+  background_snr_db: 30.0
+  sensor_snr_db: 40.0
+
+localization:
+  method: llr
+  frame_duration_ms: 50.0
+  frame_hop_ms: 25.0
+  freq_range: [300, 3000]
+  active_head: true
+  llr_base_threshold: 3.0
+  stagnation_timeout_ms: 500
+
+evaluation:
+  enabled: true

@@ -1,0 +1,46 @@
+name: test_sine_static
+description: >
+  Test scene for localization algorithm optimization.
+  Static 1000Hz sine wave, 45 deg azimuth, 3 seconds.
+  Clean anechoic room for precise ITD/ILD measurement.
+
+room:
+  dimensions: [6, 5, 3]
+  absorption: 1.0
+  max_order: 0
+
+microphone:
+  head_center: [3.0, 2.5, 1.5]
+  head_radius: 0.09
+  hrtf_mode: analytical
+
+source:
+  generator: sine
+  duration: 3.0
+  sample_rate: 44100
+  frequency: 1000
+  amplitude: 0.8
+
+motion:
+  enabled: false
+  type: static
+  position: [4.5, 4.0, 1.5]
+
+output:
+  sample_rate: 44100
+  visualize: true
+
+noise:
+  enabled: false
+  background_snr_db: 30.0
+  sensor_snr_db: 40.0
+
+localization:
+  method: gcc_phat
+  frame_duration_ms: 50.0
+  frame_hop_ms: 25.0
+  freq_range: [300, 3000]
+  active_head: true
+
+evaluation:
+  enabled: true

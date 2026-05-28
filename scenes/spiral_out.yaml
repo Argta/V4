@@ -1,0 +1,46 @@
+name: spiral_out
+description: >
+  Sound source spirals outward around the listener, 1 revolution.
+  Radius grows from 0.5m to 2.5m. 4 seconds, human voice.
+
+room:
+  dimensions: [8, 8, 3]
+  absorption: 0.3
+  max_order: 3
+
+microphone:
+  head_center: [4.0, 4.0, 1.5]
+  head_radius: 0.09
+  hrtf_mode: parametric
+
+source:
+  generator: human_voice
+  duration: 4.0
+  sample_rate: 44100
+
+motion:
+  enabled: true
+  type: spiral
+  center: [4.0, 4.0, 1.5]
+  start_radius: 0.5
+  end_radius: 2.5
+  revolutions: 1
+
+output:
+  sample_rate: 44100
+  visualize: true
+
+noise:
+  enabled: false
+  background_snr_db: 30.0
+  sensor_snr_db: 40.0
+
+localization:
+  method: gcc_phat
+  frame_duration_ms: 50.0
+  frame_hop_ms: 25.0
+  freq_range: [300, 3000]
+  active_head: true
+
+evaluation:
+  enabled: true

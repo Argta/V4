@@ -1,0 +1,49 @@
+name: front_semicircle
+description: >
+  Sound source sweeps in a front semicircle from far left (-90 deg)
+  through directly ahead (0 deg) to far right (+90 deg).
+  Entirely in the front hemisphere — no front/back ambiguity.
+  Radius 2m, 3 seconds, human voice.
+
+room:
+  dimensions: [8, 8, 3]
+  absorption: 0.3
+  max_order: 3
+
+microphone:
+  head_center: [4.0, 4.0, 1.5]
+  head_radius: 0.09
+  hrtf_mode: parametric
+
+source:
+  generator: human_voice
+  duration: 3.0
+  sample_rate: 44100
+
+motion:
+  enabled: true
+  type: semicircle
+  center: [4.0, 4.0, 1.5]
+  radius: 2.0
+  speed: 2.1
+  start_angle: 0
+  end_angle: 180
+
+output:
+  sample_rate: 44100
+  visualize: true
+
+noise:
+  enabled: false
+  background_snr_db: 30.0
+  sensor_snr_db: 40.0
+
+localization:
+  method: gcc_phat
+  frame_duration_ms: 50.0
+  frame_hop_ms: 25.0
+  freq_range: [300, 3000]
+  active_head: true
+
+evaluation:
+  enabled: true

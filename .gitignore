@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.mat
+*.wav
+*.npz
+results/
+.claude/
+*.log
+.vscode/
+.idea/
+*.egg-info/
+dist/
+build/

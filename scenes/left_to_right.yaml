@@ -1,0 +1,46 @@
+name: left_to_right
+description: >
+  Sound source moves on a straight line from left to right
+  in front of the listener (from x=1 to x=7 at y=6, distance ~2m).
+  3 seconds, human voice, active head tracking.
+
+room:
+  dimensions: [8, 8, 3]
+  absorption: 0.3
+  max_order: 3
+
+microphone:
+  head_center: [4.0, 4.0, 1.5]
+  head_radius: 0.09
+  hrtf_mode: parametric
+
+source:
+  generator: human_voice
+  duration: 3.0
+  sample_rate: 44100
+
+motion:
+  enabled: true
+  type: linear
+  start: [1.0, 2.0, 1.5]
+  end: [7.0, 2.0, 1.5]
+  speed: 2.0
+
+output:
+  sample_rate: 44100
+  visualize: true
+
+noise:
+  enabled: false
+  background_snr_db: 30.0
+  sensor_snr_db: 40.0
+
+localization:
+  method: gcc_phat
+  frame_duration_ms: 50.0
+  frame_hop_ms: 25.0
+  freq_range: [300, 3000]
+  active_head: true
+
+evaluation:
+  enabled: true

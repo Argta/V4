@@ -1,0 +1,44 @@
+﻿name: rear_static
+description: >
+  Static sound source directly behind the listener at 2m distance.
+  Tests front/back disambiguation without motion. 3 seconds, human voice.
+
+room:
+  dimensions: [8, 8, 3]
+  absorption: 0.3
+  max_order: 3
+
+microphone:
+  head_center: [4.0, 4.0, 1.5]
+  head_radius: 0.09
+  hrtf_mode: parametric
+
+source:
+  generator: human_voice
+  duration: 3.0
+  sample_rate: 44100
+
+motion:
+  enabled: false
+  type: static
+  position: [4.0, 2.0, 1.5]
+
+output:
+  sample_rate: 44100
+  visualize: true
+
+noise:
+  enabled: false
+  background_snr_db: 30.0
+  sensor_snr_db: 40.0
+
+localization:
+  method: llr
+  frame_duration_ms: 50.0
+  frame_hop_ms: 25.0
+  freq_range: [300, 3000]
+  active_head: true
+  llr_base_threshold: 3.0
+
+evaluation:
+  enabled: true
