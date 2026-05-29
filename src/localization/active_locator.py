@@ -112,7 +112,7 @@ class ActiveLocator(LocalizationAlgorithm):
 
             fb_frame = np.column_stack([l_itd, r_itd])
             # After flash, back sources are in front hemisphere → suppress FB
-            fb_on = fb_is_back if idx >= detect_frame else False
+            fb_on = fb_is_back if idx < detect_frame else False
             doa[idx] = itd_to_azimuth(itd_s, self.head_radius,
                                        stereo_frame=fb_frame, fs=self.fs,
                                        freq_range=self.itd_band,
@@ -133,6 +133,8 @@ class ActiveLocator(LocalizationAlgorithm):
         return LocalizationResult(
             doa_estimated=doa, timestamps=times, method=self.name,
             itd_per_frame=diag_itd, phase_mean=diag_phase,
+            lateral_angle=np.zeros(n_frames),
+            freq_mean=np.zeros(n_frames),
         )
 
     def _phase1_detect_side(self, stereo: np.ndarray, start_frame: int = 0) -> bool:

@@ -41,6 +41,7 @@ classdef binaural_gui < matlab.apps.AppBase
         PlayBtn     matlab.ui.control.Button
         ResetBtn    matlab.ui.control.Button
         SpeedSlider matlab.ui.control.Slider
+        ProgressSlider matlab.ui.control.Slider
         SpeedVal    matlab.ui.control.Label
         InfoText    matlab.ui.control.TextArea
         Axes3D      matlab.ui.control.UIAxes
@@ -50,11 +51,6 @@ classdef binaural_gui < matlab.apps.AppBase
         HrtfDrop    matlab.ui.control.DropDown
         SourceDrop  matlab.ui.control.DropDown
         ItdZoom     matlab.ui.control.Slider
-        DiagDrop     matlab.ui.control.DropDown
-        AxesDiag     matlab.ui.control.UIAxes
-        FullDrop     matlab.ui.control.DropDown
-        AxesFull     matlab.ui.control.UIAxes
-        AxesITDvsILD matlab.ui.control.UIAxes
         IldZoom     matlab.ui.control.Slider
         AxesAnal    matlab.ui.control.UIAxes
         AxesEvalDOA matlab.ui.control.UIAxes
@@ -193,8 +189,8 @@ classdef binaural_gui < matlab.apps.AppBase
                 'ForegroundColor', [1 1 1], ...
                 'BackgroundColor', [0.15 0.16 0.20], ...
                 'BorderType', 'none', 'HighlightColor', [0.15 0.70 0.25]);
-            sg3 = uigridlayout(sp3, [4 5]);
-            sg3.RowHeight = {'1x', 30, 26, '1x'};
+            sg3 = uigridlayout(sp3, [5 5]);
+            sg3.RowHeight = {'1x', 30, 26, 22, '1x'};
             sg3.ColumnWidth = {52, 52, 40, '1x', 35};
             sg3.Padding = [8 4 8 6];
             sg3.ColumnSpacing = 4;
@@ -229,6 +225,14 @@ classdef binaural_gui < matlab.apps.AppBase
                 'FontWeight', 'bold', 'FontColor', [0.9 0.9 0.9]);
             app.SpeedVal.Layout.Row = 3;
             app.SpeedVal.Layout.Column = 5;
+
+            app.ProgressSlider = uislider(sg3, ...
+                'Limits', [0 1], 'Value', 0, 'Step', 0.001, ...
+                'MajorTicks', [0 0.25 0.5 0.75 1], ...
+                'ValueChangedFcn', @(~,~) on_progress(app), ...
+                'ValueChangingFcn', @(~,~) on_progress(app));
+            app.ProgressSlider.Layout.Row = 4;
+            app.ProgressSlider.Layout.Column = [1 5];
 
             % -- 场景信息 --
             sp4 = uipanel(lg, 'Title', ' 场景信息 ', ...
@@ -359,45 +363,7 @@ classdef binaural_gui < matlab.apps.AppBase
                 'FontSize', 10, 'FontName', 'Consolas', 'Editable', 'off', ...
                 'FontColor', [0 0 0], 'BackgroundColor', [1 1 1]);
 
-            % 标签页 5: 定位诊断 (v3.0)
-            tab5 = uitab(tabg, 'Title', '  定位诊断  ');
-            t5g = uigridlayout(tab5, [2 1]);
-            t5g.RowHeight = {28, '1x'};
-            t5g.Padding = [4 2 2 4]; t5g.RowSpacing = 2;
-            app.DiagDrop = uidropdown(t5g, ...
-                'Items', {'ITD提取', '置信度/主频', '侧向角', '频率分布'}, ...
-                'Value', 'ITD提取', 'FontSize', 9, ...
-                'ValueChangedFcn', @(~,~) render_diag(app));
-            app.AxesDiag = uiaxes(t5g);
-            app.AxesDiag.Color = [0.15 0.15 0.15];
-            app.AxesDiag.XColor = [1 1 1]; app.AxesDiag.YColor = [1 1 1];
-            app.AxesDiag.Title.Color = [1 1 1];
-
-            % 标签页 6: 定位全流程 (v3.0)
-            tab6 = uitab(tabg, 'Title', '  定位全流程  ');
-            t6g = uigridlayout(tab6, [2 1]);
-            t6g.RowHeight = {28, '1x'};
-            t6g.Padding = [4 2 2 4]; t6g.RowSpacing = 2;
-            app.FullDrop = uidropdown(t6g, ...
-                'Items', {'时域信号', '频谱', '互相关函数', 'ITD/侧向角', '头朝向角', '头转动角'}, ...
-                'Value', '时域信号', 'FontSize', 9, ...
-                'ValueChangedFcn', @(~,~) render_fullflow(app));
-            app.AxesFull = uiaxes(t6g);
-            app.AxesFull.Color = [0.15 0.15 0.15];
-            app.AxesFull.XColor = [1 1 1]; app.AxesFull.YColor = [1 1 1];
-            app.AxesFull.Title.Color = [1 1 1];
-
-            % 标签页 7: ITD vs ILD 对比
-            tab7 = uitab(tabg, 'Title', '  ITDvsILD  ');
-            t7g = uigridlayout(tab7, [1 1]);
-            t7g.Padding = [4 4 4 4];
-            app.AxesITDvsILD = uiaxes(t7g);
-            app.AxesITDvsILD.Color = [0.15 0.15 0.15];
-            app.AxesITDvsILD.XColor = [1 1 1]; app.AxesITDvsILD.YColor = [1 1 1];
-            app.AxesITDvsILD.Title.Color = [1 1 1];
-            title(app.AxesITDvsILD, 'ITD(蓝) vs ILD(红) vs 融合(青) vs 真实(白)', 'FontSize', 11, 'FontWeight', 'bold');
-
-            % ===== 状态栏 =====
+% ===== 状态栏 =====
             app.StatusBar = uilabel(grid, ...
                 'Text', '就绪', 'FontSize', 10, 'FontColor', [0.8 0.8 0.8], ...
                 'BackgroundColor', [0.15 0.16 0.20], ...
@@ -703,9 +669,6 @@ classdef binaural_gui < matlab.apps.AppBase
             render_wave_raw(app);
             render_anal(app);
             render_eval(app);
-            render_diag(app);
-            render_fullflow(app);
-            render_itd_vs_ild(app);
             update_info(app);
 
             [~,fname] = fileparts(fpath);
@@ -1056,8 +1019,8 @@ classdef binaural_gui < matlab.apps.AppBase
             end
 
             t = app.loc_timestamps;
-            plot(ax1, t, app.doa_truth, 'k-', 'LineWidth', 1.5);
-            plot(ax1, t, app.doa_estimated, 'r--', 'LineWidth', 1.2);
+            plot(ax1, t, app.doa_truth, 'w-', 'LineWidth', 1.5);
+            plot(ax1, t, app.doa_estimated, 'r-', 'LineWidth', 1.2);
             xlabel(ax1, '时间 (s)');
             ylabel(ax1, '方位角 (deg)');
             legend(ax1, {'真实 DOA', '估计 DOA'}, 'Location', 'best', 'FontSize', 8);
@@ -1132,156 +1095,7 @@ classdef binaural_gui < matlab.apps.AppBase
 
     % ============ 定位诊断 (v3.0) ============
     methods (Access = private)
-function render_diag(app)
-            d = app.data; if isempty(d), return; end
-            ax = app.AxesDiag; sel = app.DiagDrop.Value;
-            has_diag = isfield(d, 'loc_itd');
-            cla(ax); hold(ax, 'on');
-            switch sel
-                case 'ITD提取'
-                    if has_diag
-                        plot(ax, app.loc_timestamps, d.loc_itd*1e6, 'c-', 'LineWidth', 1.2);
-                        ylabel(ax, 'ITD (us)'); xlabel(ax, 'Time (s)');
-                        title(ax, 'ITD from cross-correlation peak', 'FontSize', 11, 'FontWeight', 'bold');
-                        grid(ax, 'on'); ax.GridAlpha = 0.2;
-                    else, title(ax, 'no data'); end
-                case '置信度/主频'
-                    if has_diag
-                        yyaxis(ax, 'left');
-                        plot(ax, app.loc_timestamps, d.loc_phase, 'y-', 'LineWidth', 1.0);
-                        ylabel(ax, 'Confidence');
-                        yyaxis(ax, 'right');
-                        plot(ax, app.loc_timestamps, d.loc_freq, 'm-', 'LineWidth', 1.0);
-                        ylabel(ax, 'Freq (Hz)'); xlabel(ax, 'Time (s)');
-                        title(ax, 'Confidence & Dominant Freq', 'FontSize', 11, 'FontWeight', 'bold');
-                        grid(ax, 'on'); ax.GridAlpha = 0.2;
-                    else, title(ax, 'no data'); end
-                case '侧向角'
-                    if has_diag
-                        plot(ax, app.loc_timestamps, d.loc_lateral, 'g-', 'LineWidth', 1.5);
-                        hold(ax, 'on');
-                        plot(ax, app.loc_timestamps, app.doa_estimated, 'r--', 'LineWidth', 1.0);
-                        ylabel(ax, 'deg'); xlabel(ax, 'Time (s)');
-                        legend(ax, {'Lateral','Final DOA'}, 'FontSize', 8, 'Location', 'best');
-                        ylim(ax, [-180 180]);
-                        title(ax, 'Lateral (green) vs Final DOA (red)', 'FontSize', 11, 'FontWeight', 'bold');
-                        grid(ax, 'on'); ax.GridAlpha = 0.2;
-                    else, title(ax, 'no data'); end
-                case '频率分布'
-                    if has_diag
-                        histogram(ax, d.loc_freq, 30, 'FaceColor', [0.7 0.3 0.9], 'EdgeColor', 'none');
-                        xlabel(ax, 'Freq (Hz)'); ylabel(ax, 'Frames');
-                        title(ax, 'Dominant Freq Distribution', 'FontSize', 11, 'FontWeight', 'bold');
-                        grid(ax, 'on'); ax.GridAlpha = 0.2;
-                    else, title(ax, 'no data'); end
-            end
-            hold(ax, 'off');
-        end
-    end
 
-    % ============ 定位全流程 (v3.0) ============
-    methods (Access = private)
-        function render_fullflow(app)
-            d = app.data; if isempty(d), return; end
-            ax = app.AxesFull; sel = app.FullDrop.Value;
-            cla(ax); hold(ax, 'on');
-            has_df = isfield(d, 'diag_frame_l');
-            has_diag = isfield(d, 'loc_itd');
-            switch sel
-                case '时域信号'
-                    if has_df
-                        fs = d.fs; f_left = d.diag_frame_l(:); f_right = d.diag_frame_r(:);
-                        t = (0:length(f_left)-1)'/fs*1000;
-                        plot(ax, t, f_left, 'b-', 'LineWidth', 0.8);
-                        plot(ax, t, f_right, 'r-', 'LineWidth', 0.8);
-                        xlabel(ax, 'Time (ms)'); ylabel(ax, 'Amp');
-                        legend(ax, {'Left','Right'}, 'FontSize', 8);
-                        title(ax, 'Bandpass Filtered Frame', 'FontSize', 10, 'FontWeight', 'bold');
-                        grid(ax, 'on'); ax.GridAlpha = 0.2;
-                    else, title(ax, 'no data'); end
-                case '频谱'
-                    if has_df
-                        freqs = d.diag_freqs(:); spec_l = d.diag_spec_l(:); spec_r = d.diag_spec_r(:);
-                        fm = freqs <= 5000;
-                        plot(ax, freqs(fm), spec_l(fm), 'b-', 'LineWidth', 0.8);
-                        plot(ax, freqs(fm), spec_r(fm), 'r-', 'LineWidth', 0.8);
-                        xlabel(ax, 'Freq (Hz)'); ylabel(ax, '|FFT|');
-                        legend(ax, {'|L|','|R|'}, 'FontSize', 8);
-                        title(ax, 'Spectrum (0-5kHz)', 'FontSize', 10, 'FontWeight', 'bold');
-                        grid(ax, 'on'); ax.GridAlpha = 0.2;
-                    else, title(ax, 'no data'); end
-                case '互相关函数'
-                    if isfield(d, 'diag_xcorr') && isfield(d, 'diag_xcorr_lag')
-                        xc = d.diag_xcorr(:); lag_us = d.diag_xcorr_lag(:);
-                        plot(ax, lag_us, xc, 'c-', 'LineWidth', 1.0);
-                        [~, pi] = max(xc);
-                        plot(ax, lag_us(pi), xc(pi), 'ro', 'MarkerSize', 10, 'LineWidth', 2);
-                        xlabel(ax, 'Lag (us)'); ylabel(ax, 'Corr');
-                        title(ax, 'Cross-correlation & Peak', 'FontSize', 10, 'FontWeight', 'bold');
-                        grid(ax, 'on'); ax.GridAlpha = 0.2;
-                    else, title(ax, 'no data'); end
-                case 'ITD/侧向角'
-                    if has_diag
-                        yyaxis(ax, 'left');
-                        plot(ax, app.loc_timestamps, d.loc_itd*1e6, 'c-', 'LineWidth', 1.2);
-                        ylabel(ax, 'ITD (us)');
-                        yyaxis(ax, 'right');
-                        plot(ax, app.loc_timestamps, d.loc_lateral, 'g-', 'LineWidth', 1.2);
-                        ylabel(ax, 'Lateral (deg)'); xlabel(ax, 'Time (s)');
-                        title(ax, 'ITD & Lateral Angle', 'FontSize', 10, 'FontWeight', 'bold');
-                        grid(ax, 'on'); ax.GridAlpha = 0.2;
-                    else, title(ax, 'no data'); end
-                case '头朝向角'
-                    if isfield(d, 'head_src_angle')
-                        t_ang = (0:length(d.head_src_angle)-1) / d.fs;
-                        plot(ax, t_ang, d.head_src_angle(:), 'c-', 'LineWidth', 1.2);
-                        hold(ax, 'on'); yline(ax, 0, 'w--');
-                        xlabel(ax, 'Time (s)'); ylabel(ax, 'deg');
-                        title(ax, 'Head-Source Angle (0=faces src)', 'FontSize', 10, 'FontWeight', 'bold');
-                        grid(ax, 'on'); ax.GridAlpha = 0.2;
-                    else, title(ax, 'no data'); end
-                case '头转动角'
-                    if isfield(d, 'head_yaw_deg')
-                        t_yaw = (0:length(d.head_yaw_deg)-1) / d.fs;
-                        plot(ax, t_yaw, d.head_yaw_deg(:), 'y-', 'LineWidth', 1.5);
-                        xlabel(ax, 'Time (s)'); ylabel(ax, 'deg');
-                        title(ax, 'Head Yaw (right=positive)', 'FontSize', 10, 'FontWeight', 'bold');
-                        grid(ax, 'on'); ax.GridAlpha = 0.2;
-                    else, title(ax, 'no data'); end
-            end
-            hold(ax, 'off');
-        end
-    end
-
-    % ============ ITD vs ILD 对比 ============
-    methods (Access = private)
-        function render_itd_vs_ild(app)
-            ax = app.AxesITDvsILD; cla(ax); hold(ax, 'on');
-            if isempty(app.data), return; end
-            has = ~isempty(app.doa_itd_only) && ~isempty(app.doa_ild_only);
-            if ~has
-                title(ax, 'ITD vs ILD 对比 — 无诊断数据', 'FontSize', 11);
-                hold(ax, 'off'); return;
-            end
-            t = app.loc_timestamps;
-            plot(ax, t, app.doa_itd_only, 'b-', 'LineWidth', 1.0);
-            plot(ax, t, app.doa_ild_only, 'r-', 'LineWidth', 1.0);
-            plot(ax, t, app.doa_estimated, 'c-', 'LineWidth', 1.5);
-            if isfield(app.data, 'doa_truth')
-                ti = min(length(t), length(app.data.doa_truth));
-                plot(ax, t(1:ti), app.data.doa_truth(1:ti), 'w-', 'LineWidth', 1.2);
-                legend(ax, {'ITD独','ILD独','融合','真实'}, 'FontSize', 8, 'Location', 'best');
-            else
-                legend(ax, {'ITD独','ILD独','融合'}, 'FontSize', 8, 'Location', 'best');
-            end
-            ylim(ax, [-180 180]); xlabel(ax, '时间 (s)'); ylabel(ax, '方位角 (deg)');
-            grid(ax, 'on'); ax.GridAlpha = 0.2;
-            hold(ax, 'off');
-        end
-    end
-
-    % ============ 场景信息面板 ============
-    methods (Access = private)
         function update_info(app)
             if ~isvalid(app), return; end
             d = app.data;
@@ -1358,6 +1172,9 @@ function render_diag(app)
                 'BusyMode', 'drop', 'TimerFcn', @(~,~) anim_step(app));
             start(t);
             app.h_wave_cur = []; app.h_anal_cur = [];
+            if isvalid(app.ProgressSlider)
+                app.ProgressSlider.Limits = [0 1];
+            end
         end
 
         function stop_anim(app)
@@ -1381,9 +1198,17 @@ function render_diag(app)
 
             step = max(1, round(app.anim_speed * fs * 0.035));
             app.anim_idx = min(app.anim_idx + step, n);
-            idx = app.anim_idx;
+            if app.anim_idx >= n, app.anim_idx = 1; end
+            render_frame(app);
+        end
 
-            try
+        function render_frame(app)
+            if ~isvalid(app) || isempty(app.data), return; end
+            d = app.data;
+            traj = d.trajectory;
+            n = size(traj, 1);
+            fs = d.fs;
+            idx = app.anim_idx;try
                 if isvalid(app.h_source)
                     app.h_source.XData = traj(idx,1);
                     app.h_source.YData = traj(idx,2);
@@ -1428,12 +1253,18 @@ function render_diag(app)
             end
 
             if idx >= n, app.anim_idx = 1; end
+            if isvalid(app.ProgressSlider)
+                app.ProgressSlider.Value = app.anim_idx / max(n, 1);
+            end
         end
 
         function on_reset(app, ~)
             if ~isvalid(app), return; end
             stop_anim(app);
             app.anim_idx = 1;
+            if isvalid(app.ProgressSlider)
+                app.ProgressSlider.Value = 0;
+            end
             if ~isempty(app.data)
                 render_3d(app);
                 status(app, '动画已重置。', [0.3 0.3 0.3]);
@@ -1465,6 +1296,14 @@ function render_diag(app)
             else
                 app.SpeedVal.Text = sprintf('%.1fx', app.anim_speed);
             end
+        end
+
+        function on_progress(app, ~)
+            if ~isvalid(app) || isempty(app.data), return; end
+            n = size(app.data.trajectory, 1);
+            if n == 0, return; end
+            app.anim_idx = max(1, round(app.ProgressSlider.Value * n));
+            render_frame(app);
         end
     end
 end

@@ -235,7 +235,7 @@ class BinauralSimulator:
             flash_amount = 120.0   # degrees
             flash_speed = 480.0    # deg/s
             track_speed = 90.0     # deg/s max tracking
-            stop_thresh = 10.0     # |doa| below this → head stops → simulation ends
+            stop_thresh = 15.0     # |doa| below this → head stops → simulation ends
             settling_time = 0.05   # seconds of stillness after flash
             t_flash_end = 0.35 + flash_amount / flash_speed  # ~0.6s
             t_track_start = t_flash_end + settling_time       # ~0.65s
@@ -260,18 +260,17 @@ class BinauralSimulator:
                 else:
                     tidx = int(np.clip(t / fhop, 0, len(doa_p1) - 1))
                     doa_est = doa_p1[tidx]
-                    if abs(doa_est) < stop_thresh:
+                    world_target = yaw_pass1[k] + doa_est
+                    diff = (world_target - prev + 180) % 360 - 180
+                    if abs(diff) < stop_thresh:
                         stopped = True
                         stop_sample = k
                         y = prev
                     else:
-                        world_target = yaw_pass1[k] + doa_est
-                        diff = (world_target - prev + 180) % 360 - 180
-                        tgt = prev + diff
                         ms = track_speed / self.fs
-                        if tgt > prev + ms: y = prev + ms
-                        elif tgt < prev - ms: y = prev - ms
-                        else: y = tgt
+                        if diff > ms: y = prev + ms
+                        elif diff < -ms: y = prev - ms
+                        else: y = world_target
                 yaw_pass2[k] = y
                 prev = y
 
