@@ -255,6 +255,137 @@ class LLRLocator(LocalizationAlgorithm):
             dual_hypothesis_doa=dual_doa,
         )
 
+    # ---- Streaming API (Phase 1) ----
+
+    def reset(self):
+        """Clear internal state for a new streaming session."""
+        super().reset()
+        self._llr_value = 0.0
+        self._fb_determined = False
+        self._fb_is_back = False
+        self._source_left = None       # None = not yet determined
+        self._p1_ild_values = []
+        self._last_valid_itd = 0.0
+        self._yaw_accumulated = 0.0    # accumulated rotation for ITD prediction
+        self._nfft = 1
+        while self._nfft < 2 * self.frame_len:
+            self._nfft *= 2
+        self._accum_time = 0.0
+
+    def process_frame(self, frame, yaw_head=0.0):
+        """Process a single stereo frame with LLR accumulation.
+
+        Args:
+            frame: (frame_len, 2) stereo samples
+            yaw_head: current head yaw (deg), 0=faces forward
+
+        Returns:
+            (doa_world_deg, confidence) tuple
+        """
+        from .llr_core import update_llr, compute_adaptive_threshold, check_stagnation
+
+        # -- NFFT (lazy) --
+        if not hasattr(self, "_nfft"):
+            self._nfft = 1
+            while self._nfft < 2 * self.frame_len:
+                self._nfft *= 2
+        nfft = self._nfft
+
+        win = np.hanning(self.frame_len)
+        idx = self._frame_idx
+
+        # -- ITD extraction (GCC-PHAT per frame) --
+        l_itd = sosfilt(self.sos_itd, frame[:, 0] * win)
+        r_itd = sosfilt(self.sos_itd, frame[:, 1] * win)
+
+        from .gcc_phat import _gcc_phat_single_frame
+        itd_s, gcc, freqs, L, R = _gcc_phat_single_frame(
+            frame, win, self.max_lag, nfft,
+            self.sos_itd, self.itd_band, self.fs)
+
+        # Energy gate
+        frame_rms = np.sqrt(np.mean(l_itd ** 2 + r_itd ** 2))
+        if frame_rms < 1e-4:
+            itd_s = getattr(self, "_last_valid_itd", 0.0)
+        else:
+            self._last_valid_itd = itd_s
+
+        # -- ILD --
+        l_hf = sosfilt(self.sos_ild, frame[:, 0] * win)
+        r_hf = sosfilt(self.sos_ild, frame[:, 1] * win)
+        ild_db = 10 * np.log10((np.sum(l_hf ** 2) + 1e-10) / (np.sum(r_hf ** 2) + 1e-10))
+
+        # Lateral angle from ITD
+        from .xcorr_itd import inverse_woodworth, itd_to_azimuth
+        lateral_deg = np.rad2deg(inverse_woodworth(abs(itd_s), self.head_radius))
+
+        # -- Phase 1: ILD collection for left/right --
+        if self._source_left is None and idx < self.p1_frames:
+            self._p1_ild_values.append(ild_db)
+        if idx == self.p1_frames - 1 and self._source_left is None:
+            self._source_left = float(np.mean(self._p1_ild_values)) > 0
+
+        # -- Front/back frame data --
+        fb_frame = np.column_stack([l_itd, r_itd])
+        fb_fullband = np.column_stack([frame[:, 0] * win, frame[:, 1] * win])
+
+        # -- LLR update (during rotation phase) --
+        yaw_deg = yaw_head  # current head yaw
+        if idx >= self.p2_start and self._source_left is not None and not self._fb_determined:
+            llr_spec = 0.0
+            self._llr_value, comps = update_llr(
+                self._llr_value, itd_s, ild_db, lateral_deg, yaw_deg,
+                self._source_left, self.head_radius,
+                llr_spectral=llr_spec)
+
+            # Adaptive threshold
+            threshold = compute_adaptive_threshold(
+                lateral_deg, yaw_deg, self.head_radius,
+                base_threshold=self.llr_base_threshold)
+
+            if self._llr_value > threshold:
+                self._fb_determined = True
+                self._fb_is_back = True
+            elif self._llr_value < -threshold:
+                self._fb_determined = True
+                self._fb_is_back = False
+
+        elif idx >= self.p2_start and self._source_left is not None and self._fb_determined:
+            # Tracking mode: continue accumulating
+            llr_spec = 0.0
+            self._llr_value, _ = update_llr(
+                self._llr_value, itd_s, ild_db, lateral_deg, yaw_deg,
+                self._source_left, self.head_radius,
+                llr_spectral=llr_spec)
+
+        # -- DOA computation --
+        prev = self._prev_doa
+        doa_head = itd_to_azimuth(
+            itd_s, self.head_radius,
+            stereo_frame=fb_frame, fs=self.fs,
+            freq_range=self.itd_band,
+            fb_fullband=fb_fullband,
+            prev_doa=prev,
+            fb_active=self._fb_determined,
+            fb_is_back=self._fb_is_back)
+
+        # World-frame
+        doa_world = doa_head + yaw_head
+        doa_world = ((doa_world + 180) % 360) - 180
+
+        # Confidence
+        search = np.concatenate([gcc[-self.max_lag:], gcc[:self.max_lag + 1]])
+        peak_val = float(np.max(search))
+        conf = min(1.0, max(0.0, peak_val / (frame_rms * 5 + 1e-10)))
+
+        # -- Update state --
+        self._prev_doa = doa_head
+        self._frame_idx += 1
+        self._accum_time += self.frame_hop / self.fs
+
+        return doa_world, conf
+
+
     def _phase1_detect_side(self, stereo: np.ndarray) -> bool:
         """ILD-based left/right detection. True = source LEFT."""
         n_frames = min(self.n_frames(len(stereo)), self.p1_frames)

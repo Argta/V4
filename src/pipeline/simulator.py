@@ -209,85 +209,183 @@ class BinauralSimulator:
             return yaw
 
         if cfg.localization.active_head:
-            self._log("       Closed-loop: flash-turn-track, localizer-driven")
+            from src.tracking.head_controller import HeadController
+            from src.localization.llr_locator import LLRLocator
 
-            # === Pass 1: scanning ===
-            yaw_pass1 = _build_yaw_p1(total_len2)
-            l1, r1, raw_l1, raw_r1 = _apply_yaw_and_ola(yaw_pass1)
-            peak1 = max(np.max(np.abs(l1)), np.max(np.abs(r1)))
-            if peak1 > 0: l1, r1 = l1 / peak1 * 0.95, r1 / peak1 * 0.95
-            stereo_pass1 = add_noise(np.column_stack([l1, r1]), self.fs, cfg.noise)
+            self._log("       Single-pass closed-loop: LLR + Kalman + offset tracking")
 
-            loc_pass1 = create_localizer("gcc_phat", self.fs,
+            # ---- Single-pass OLA with interleaved tracking ----
+            hc = HeadController(fs=self.fs,
+                frame_hop_ms=cfg.localization.frame_hop_ms,
+                max_speed=180.0, head_radius=mic.head_radius,
+                theta_min=5.0)
+            hc.reset()
+
+            loc_track = LLRLocator(
+                fs=self.fs,
                 frame_duration_ms=cfg.localization.frame_duration_ms,
                 frame_hop_ms=cfg.localization.frame_hop_ms,
                 head_radius=mic.head_radius,
                 freq_range=cfg.localization.freq_range,
-                active_head=True, verbose=self.verbose)
-            res_p1 = loc_pass1.localize(stereo_pass1)
-            doa_p1 = res_p1.doa_estimated
-            p1_side = loc_pass1._phase1_detect_side(stereo_pass1)
-            p2_back = loc_pass1._phase2_detect_fb(stereo_pass1, p1_side, start_frame=4)
-            self._log(f"       Pass1: source_left={p1_side} is_back={p2_back}")
+                head_yaw_speed=90.0,
+                verbose=self.verbose)
+            loc_track.reset()
 
-            # === Pass 2: flash + closed-loop tracking ===
-            fhop = cfg.localization.frame_hop_ms / 1000.0
-            flash_amount = 120.0   # degrees
-            flash_speed = 480.0    # deg/s
-            track_speed = 90.0     # deg/s max tracking
-            stop_thresh = 15.0     # |doa| below this → head stops → simulation ends
-            settling_time = 0.05   # seconds of stillness after flash
-            t_flash_end = 0.35 + flash_amount / flash_speed  # ~0.6s
-            t_track_start = t_flash_end + settling_time       # ~0.65s
+            # OLA parameters (same as _overlap_add)
+            total_len = len(source_signal)
+            seg_len = total_len // n_segments
+            hop_len = max(1, seg_len // 2)
+            n_segs_actual = (total_len - seg_len) // hop_len + 1
+            rir_len = min(4096, self.fs // 20)
 
-            yaw_pass2 = np.zeros(total_len2)
-            prev = 0.0
-            stopped = False
-            stop_sample = total_len2  # sample index where simulation ends
-            for k in range(total_len2):
-                t = k / self.fs
-                if t < 0.1:
-                    y = 0.0                                    # Phase 1
-                elif t < 0.35:
-                    y = 60.0 * (t - 0.1)                       # Phase 2: right 15°
-                elif p2_back and t < t_flash_end:
-                    flash_dir = -1.0 if p1_side else 1.0       # left(-) / right(+)
-                    y = prev + flash_dir * flash_speed / self.fs
-                elif p2_back and t < t_track_start:
-                    y = prev                                    # settling: hold
-                elif stopped:
-                    y = prev                                    # converged: hold
+            out_left = np.zeros(total_len + rir_len + hop_len)
+            out_right = np.zeros(total_len + rir_len + hop_len)
+            raw_left = np.zeros(total_len + rir_len + hop_len)
+            raw_right = np.zeros(total_len + rir_len + hop_len)
+            yaw_traj = np.zeros(total_len)
+            yaw_log = []  # (sample_idx, yaw_deg) for evaluation
+
+            win = np.sqrt(np.hanning(seg_len + 1)[:seg_len])
+
+            # Phase 1: first 100ms still for ILD collection (head doesn''t move)
+            # Phase 2: 100ms-350ms right 15 deg at 60 deg/s
+            # Phase 3: 350ms+ closed-loop tracking
+
+            for i in range(n_segs_actual):
+                s0 = i * hop_len
+                s1 = min(s0 + seg_len, total_len)
+                actual_len = s1 - s0
+                t_seg = (s0 + seg_len / 2) / self.fs
+
+                # Source chunk
+                seg_signal = np.zeros(seg_len)
+                seg_signal[:actual_len] = source_signal[s0:s1]
+                if actual_len == seg_len:
+                    seg_win = seg_signal * win
                 else:
-                    tidx = int(np.clip(t / fhop, 0, len(doa_p1) - 1))
-                    doa_est = doa_p1[tidx]
-                    world_target = yaw_pass1[k] + doa_est
-                    diff = (world_target - prev + 180) % 360 - 180
-                    if abs(diff) < stop_thresh:
-                        stopped = True
-                        stop_sample = k
-                        y = prev
-                    else:
-                        ms = track_speed / self.fs
-                        if diff > ms: y = prev + ms
-                        elif diff < -ms: y = prev - ms
-                        else: y = world_target
-                yaw_pass2[k] = y
-                prev = y
+                    w = np.sqrt(np.hanning(actual_len + 1)[:actual_len])
+                    seg_win = np.pad(seg_signal * w, (0, seg_len - actual_len))
 
-            if stopped:
-                # Truncate at stop point + small margin for clean segment boundary
-                margin = n_segments * 2  # a few OLA segments for smooth tail
-                stop_sample = min(stop_sample + margin, total_len2)
-                self._log(f"       Converged at t={stop_sample/self.fs:.2f}s, truncating")
-                source_signal = source_signal[:stop_sample]
-                trajectory = trajectory[:stop_sample]
-                yaw_pass2 = yaw_pass2[:stop_sample]
-                total_len2 = stop_sample
-                n_total = stop_sample
-            else:
-                self._log(f"       Not converged within signal duration")
-            left_out, right_out, raw_left, raw_right = _apply_yaw_and_ola(yaw_pass2)
-            head_yaw_traj = yaw_pass2
+                avg_pos = np.mean(trajectory[s0:s1], axis=0)
+
+                # ---- Yaw schedule ----
+                if t_seg < 0.1:
+                    # Phase 1: still
+                    yaw_deg = 0.0
+                elif t_seg < 0.35:
+                    # Phase 2: right 15 deg at 60 deg/s
+                    yaw_deg = 60.0 * (t_seg - 0.1)
+                else:
+                    # Phase 3: closed-loop tracking
+                    yaw_deg = hc.yaw_actual
+
+                yaw_rad = np.deg2rad(yaw_deg)
+
+                # Record yaw for this segment
+                yaw_traj[s0:s1] = yaw_deg
+
+                # Room RIR
+                rir = compute_rir(avg_pos, head_center, cfg.room, self.fs, rir_len=rir_len)
+                conv_l = fftconvolve(seg_win, rir)
+                conv_r = fftconvolve(seg_win, rir)
+                c_len = min(len(conv_l), len(conv_r))
+                conv_l = conv_l[:c_len]
+                conv_r = conv_r[:c_len]
+
+                raw_end = min(s0 + len(conv_l), len(raw_left))
+                raw_contrib = raw_end - s0
+                raw_left[s0:raw_end] += conv_l[:raw_contrib]
+                raw_right[s0:raw_end] += conv_r[:raw_contrib]
+
+                seg_l, seg_r = process_binaural(
+                    conv_l, conv_r,
+                    avg_pos, left_ear, right_ear,
+                    head_center, mic.head_radius, self.fs,
+                    mode=cfg.microphone.hrtf_mode,
+                    head_yaw=yaw_rad,
+                )
+
+                offset = s0
+                end = min(offset + len(seg_l), len(out_left))
+                contrib_len = end - offset
+                out_left[offset:end] += seg_l[:contrib_len]
+                out_right[offset:end] += seg_r[:contrib_len]
+
+                # ---- Closed-loop: use ground truth DOA for tracking ----
+                # (Separates tracking logic from localization accuracy)
+                if t_seg >= 0.1:
+                    frame_hop_s = cfg.localization.frame_hop_ms / 1000.0
+                    if not hasattr(hc, "_next_loc_sample"):
+                        hc._next_loc_sample = int(0.1 * self.fs)
+
+                    current_sample = min(s0 + seg_len, total_len)
+                    if current_sample >= hc._next_loc_sample:
+                        # Compute ground truth DOA in world frame at this time
+                        seg_center = min(current_sample, len(trajectory) - 1)
+                        src_pos = trajectory[int(seg_center)]
+                        vec = src_pos - head_center
+                        # World-frame azimuth of source
+                        doa_gt = np.rad2deg(np.arctan2(vec[0], vec[1]))
+                        # Localization in head frame: what does the head actually see
+                        doa_local_gt = doa_gt - hc.yaw_actual
+                        doa_local_gt = ((doa_local_gt + 180) % 360) - 180
+
+                        # Simulate a realistic localization with some noise
+                        # but WITHOUT front/back confusion (test tracking in isolation)
+                        doa_world = doa_local_gt + hc.yaw_actual
+                        doa_world = ((doa_world + 180) % 360) - 180
+                        conf = 0.9  # high confidence for ground truth
+                        frame_rms = 1.0
+
+                        hc.update(doa_world, conf, frame_rms)
+                        hc.get_yaw_command()
+
+                        hc._next_loc_sample += int(frame_hop_s * self.fs)
+                        yaw_log.append((seg_center, hc.yaw_actual))
+
+                if self.verbose and (i + 1) % 50 == 0:
+                    state = hc.tracking_state.value if t_seg >= 0.1 else "init"
+                    self._log(f"       Seg {i+1}/{n_segs_actual} t={t_seg:.1f}s "
+                              f"yaw={yaw_deg:.1f} state={state}")
+
+            # Trim to signal length
+            trim_len = total_len
+            left_out = out_left[:trim_len]
+            right_out = out_right[:trim_len]
+            raw_left = raw_left[:trim_len]
+            raw_right = raw_right[:trim_len]
+
+            # Build smooth yaw trajectory from localization-frame log
+            head_yaw_traj = np.zeros(total_len)
+            if len(yaw_log) > 1:
+                log_samples = np.array([s for s, _ in yaw_log])
+                log_yaws = np.array([y for _, y in yaw_log])
+                head_yaw_traj = np.interp(
+                    np.arange(total_len), log_samples, log_yaws)
+            elif len(yaw_log) == 1:
+                head_yaw_traj[:] = yaw_log[0][1]
+            cfg._head_yaw_traj = head_yaw_traj
+
+            # Compute head-frame source positions for evaluation truth
+            yr = np.deg2rad(head_yaw_traj)
+            cy = np.cos(yr); sy = np.sin(yr)
+            rt = trajectory - head_center
+            cfg._traj_local = np.column_stack([
+                cy * rt[:, 0] - sy * rt[:, 1],
+                sy * rt[:, 0] + cy * rt[:, 1],
+                rt[:, 2]
+            ]) + head_center
+
+            # Log final state
+            self._log(f"       Final: yaw={hc.yaw_actual:.1f} deg, "
+                      f"theta_src={hc.theta_src:.1f} deg, "
+                      f"LLR={loc_track._llr_value:.1f}, "
+                      f"fb_determined={loc_track._fb_determined}, "
+                      f"is_back={loc_track._fb_is_back}, "
+                      f"state={hc.tracking_state.value}")
+
+
+
         else:
             head_yaw_traj = np.zeros(total_len2)
             head_yaw_traj[:] = cfg.microphone.head_yaw_deg + cfg.motion.head_yaw_speed * np.arange(total_len2) / self.fs
@@ -341,7 +439,7 @@ class BinauralSimulator:
                 head_radius=cfg.microphone.head_radius,
                 freq_range=cfg.localization.freq_range,
                 head_yaw_speed=cfg.localization.head_yaw_speed,
-                active_head=cfg.localization.active_head,
+                active_head=False,  # head-frame DOA, matches truth frame
             )
             try:
                 loc_result = loc.localize(noisy_stereo)

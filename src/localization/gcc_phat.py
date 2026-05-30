@@ -9,7 +9,7 @@ import numpy as np
 from scipy.signal import butter, sosfilt
 
 from .base import LocalizationAlgorithm, LocalizationResult
-from .xcorr_itd import itd_to_azimuth, _subsample_peak
+from .xcorr_itd import itd_to_azimuth, _subsample_peak, inverse_woodworth
 
 
 class GCCPHAT(LocalizationAlgorithm):
@@ -224,6 +224,124 @@ class GCCPHAT(LocalizationAlgorithm):
             result.diag_xphase = detail_data['xcorr']
             result.diag_xweight = detail_data['xcorr_lag']
         return result
+
+
+    # ---- Streaming API (Phase 1) ----
+
+    def reset(self):
+        """Clear internal state for a new streaming session."""
+        super().reset()
+        self._last_valid_itd = 0.0
+        self._fb_determined = not self.active_head
+        self._is_back = False
+        self._ild_early = []
+        self._itd_rotate = []
+        self._t_rotate = []
+        self._nfft = 1
+        while self._nfft < 2 * self.frame_len:
+            self._nfft *= 2
+        self._accum_time = 0.0
+
+    def process_frame(self, frame, yaw_head=0.0):
+        """Process a single stereo frame. Returns (doa_world_deg, confidence).
+
+        Args:
+            frame: (frame_len, 2) stereo samples
+            yaw_head: current head yaw (deg), 0=faces forward
+
+        Returns:
+            (doa_world_deg, confidence) tuple
+        """
+        # -- NFFT (lazy) --
+        if not hasattr(self, "_nfft"):
+            self._nfft = 1
+            while self._nfft < 2 * self.frame_len:
+                self._nfft *= 2
+        nfft = self._nfft
+
+        win = np.hanning(self.frame_len)
+
+        # -- ITD extraction via helper --
+        itd_s, gcc, freqs, L, R = _gcc_phat_single_frame(
+            frame, win, self.max_lag, nfft,
+            self.sos_itd, self.itd_band, self.fs)
+
+        # Energy gate
+        l_itd = sosfilt(self.sos_itd, frame[:, 0] * win)
+        r_itd = sosfilt(self.sos_itd, frame[:, 1] * win)
+        frame_rms = np.sqrt(np.mean(l_itd ** 2 + r_itd ** 2))
+        if frame_rms < 1e-4:
+            itd_s = getattr(self, "_last_valid_itd", 0.0)
+        else:
+            self._last_valid_itd = itd_s
+
+        # -- ILD from dual bands --
+        lateral_itd = np.rad2deg(inverse_woodworth(abs(itd_s), self.head_radius))
+
+        l_hf = sosfilt(self.sos_ild, frame[:, 0] * win)
+        r_hf = sosfilt(self.sos_ild, frame[:, 1] * win)
+        l_lf = sosfilt(self.sos_ild_lf, frame[:, 0] * win)
+        r_lf = sosfilt(self.sos_ild_lf, frame[:, 1] * win)
+        ild_hf = 10 * np.log10((np.sum(l_hf ** 2) + 1e-10) / (np.sum(r_hf ** 2) + 1e-10))
+        ild_lf = 10 * np.log10((np.sum(l_lf ** 2) + 1e-10) / (np.sum(r_lf ** 2) + 1e-10))
+        sign = -1 if ild_hf > 0 else 1
+        ild_ratio = np.clip(np.abs(ild_lf) / (np.abs(ild_hf) + 1e-10), 0, 1)
+        theta_ild = 60.0 + ild_ratio * 30.0
+
+        # Fusion
+        if lateral_itd > 70.0 and theta_ild < lateral_itd:
+            lateral_fused = theta_ild
+        else:
+            lateral_fused = lateral_itd
+        doa_fused = sign * lateral_fused
+
+        # -- Active-head front/back --
+        fb_frame = np.column_stack([l_itd, r_itd])
+        fb_fullband = np.column_stack([frame[:, 0] * win, frame[:, 1] * win])
+
+        if self.active_head and not self._fb_determined:
+            idx = self._frame_idx
+            if idx < 4:
+                self._ild_early.append(ild_hf)
+            elif 4 <= idx < 20:
+                t_rel = (idx - 4) * self.frame_hop / self.fs
+                self._t_rotate.append(t_rel)
+                self._itd_rotate.append(abs(itd_s))
+            if idx == 19:
+                source_left = float(np.mean(self._ild_early)) > 0
+                if len(self._itd_rotate) > 2:
+                    slope = np.polyfit(self._t_rotate, self._itd_rotate, 1)[0]
+                    if source_left:
+                        slope = -slope
+                    self._is_back = slope > 0
+                self._fb_determined = True
+
+        prev = self._prev_doa
+        doa_head = itd_to_azimuth(
+            itd_s, self.head_radius,
+            stereo_frame=fb_frame, fs=self.fs,
+            freq_range=self.itd_band,
+            lateral_override=doa_fused,
+            fb_fullband=fb_fullband,
+            prev_doa=prev,
+            fb_active=self._fb_determined,
+            fb_is_back=self._is_back)
+
+        # World-frame
+        doa_world = doa_head + yaw_head
+        doa_world = ((doa_world + 180) % 360) - 180
+
+        # Confidence based on GCC peak height
+        search = np.concatenate([gcc[-self.max_lag:], gcc[:self.max_lag + 1]])
+        peak_val = float(np.max(search))
+        conf = min(1.0, max(0.0, peak_val / (frame_rms * 5 + 1e-10)))
+
+        # -- Update state --
+        self._prev_doa = doa_head
+        self._frame_idx += 1
+        self._accum_time += self.frame_hop / self.fs
+
+        return doa_world, conf
 
 
 

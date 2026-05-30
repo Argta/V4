@@ -36,6 +36,16 @@ classdef binaural_gui < matlab.apps.AppBase
 
     properties (Access = private, Transient, NonCopyable)
         UIFigure    matlab.ui.Figure
+        % v4.0: head control wheel
+        YawSlider   matlab.ui.control.Slider
+        YawModeLabel matlab.ui.control.Label
+        YawActualLabel matlab.ui.control.Label
+        ThetaLocalLabel matlab.ui.control.Label
+        ThetaWorldLabel matlab.ui.control.Label
+        ItdLiveLabel matlab.ui.control.Label
+        IldLiveLabel matlab.ui.control.Label
+        ConfLiveLabel matlab.ui.control.Label
+        yaw_mode    char = 'offset_tracking'  % current head control mode
         SceneDrop   matlab.ui.control.DropDown
         RunBtn      matlab.ui.control.Button
         PlayBtn     matlab.ui.control.Button

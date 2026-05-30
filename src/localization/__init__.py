@@ -1,7 +1,7 @@
 """Localization algorithms for binaural DOA estimation."""
 
 from .ground_truth import compute_truth_doa, compute_truth_elevation
-from .base import LocalizationResult, LocalizationAlgorithm
+from .base import LocalizationResult, LocalizationAlgorithm, FrameResult
 from .xcorr_itd import XCorrITD
 from .gcc_phat import GCCPHAT
 from .srp_phat import SRPPHAT
@@ -97,7 +97,7 @@ def localize(stereo, fs, method="gcc_phat", **kwargs):
 
 __all__ = [
     "compute_truth_doa", "compute_truth_elevation",
-    "LocalizationResult", "LocalizationAlgorithm",
+    "LocalizationResult", "LocalizationAlgorithm", "FrameResult",
     "XCorrITD", "GCCPHAT", "SRPPHAT", "ActiveLocator", "LLRLocator",
     "create_localizer", "localize",
 ]

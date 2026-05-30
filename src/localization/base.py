@@ -1,8 +1,20 @@
-"""Base classes and result container for localization algorithms."""
+﻿"""Base classes and result container for localization algorithms."""
 
 from dataclasses import dataclass, field
 from typing import Optional
 import numpy as np
+
+
+@dataclass
+class FrameResult:
+    """Single-frame localization result for streaming mode."""
+    doa_deg: float           # world-frame azimuth
+    doa_local_deg: float     # head-frame azimuth
+    confidence: float        # 0-1
+    itd_us: float            # measured ITD in microseconds
+    ild_db: float            # measured ILD in dB
+    yaw_head: float          # head yaw for this frame
+    timestamp: float         # cumulative time in seconds
 
 
 @dataclass
@@ -79,3 +91,23 @@ class LocalizationAlgorithm:
         if signal_len < self.frame_len:
             return 0
         return (signal_len - self.frame_len) // self.frame_hop + 1
+
+    # ---- Streaming API (Phase 1) ----
+
+    def reset(self):
+        """Clear internal state for a new streaming session."""
+        self._frame_idx = 0
+        self._prev_doa = None
+
+    def process_frame(self, frame: np.ndarray,
+                      yaw_head: float = 0.0):
+        """Process a single stereo frame. Returns (doa_deg, confidence).
+
+        Args:
+            frame: (frame_len, 2) stereo samples
+            yaw_head: current head yaw angle in degrees
+
+        Returns:
+            (doa_deg, confidence) tuple
+        """
+        raise NotImplementedError
